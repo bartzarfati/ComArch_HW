@@ -5,9 +5,10 @@
 #include <fstream>
 #include <sstream>
 #include <vector>
-#include "cmath"
+#include <cmath>
 #include <list>
-
+#include <algorithm>
+#include <cstdio>
 
 using std::FILE;
 using std::string;
@@ -23,47 +24,59 @@ using std::stringstream;
 #define HIT true
 #define VALID 1
 #define INVALID 0
+#define INF 1000000000
 
 using namespace std;
 
+
 class Block
 {
-public:
+	public:
 	//********* members *********//
-	 
 	unsigned blockSize;
 	unsigned tag;
 	unsigned startingAddress;
 	bool dirtyBit;
 	//bool validBit=false;
-	unsigned lruLastTouchTime;
+	int lruLastTouchTime;
 	bool isEmpty;
-
+	int validBit;
 	//*********methods*********//
-	explicit Block(unsigned blockSize_t);
+	Block() = default ;
+	Block(unsigned blockSize_t):
+    		blockSize(blockSize_t), tag(0), startingAddress(0), dirtyBit(false), lruLastTouchTime(INF), isEmpty(true),validBit(INVALID){}
+
 	bool isHit(unsigned address);
 	void makeDirty();
 	void setStartingAddress(unsigned address);
-
-
-
+	bool operator == (const Block& block2)
+	{
+		if (this->tag == block2.tag)
+		{
+			return true;
+		}
+		return false;
+	}
+	~Block()=default;
 
 };
-Block::Block(unsigned blockSize_t): blockSize(blockSize_t){
-	this->lruLastTouchTime=0;
-	this->startingAddress=-1;
-	this->dirtyBit=false;
-	this->isEmpty=true;
-};
+
+Block& getBlock(vector<Block> set, unsigned way) 
+{
+
+	for (size_t i = 0; i < set.size(); i++) {
+		if (i == way) {
+        		return set[i];
+    		}
+	}
+	Block block=Block(set[0].blockSize);
+	return block;
+}
 
 bool Block::isHit(unsigned address)
 {
-	
-	printf("address is %d\n",address );
-	printf("startingAddress is %d\n",startingAddress );
-	unsigned blockByteSize=log2((int)blockSize);
-	printf("blockByteSize is %d\n",blockByteSize );
-	if(address>=startingAddress && address<startingAddress+blockByteSize)
+	unsigned blockByteSize=log2((int)this->blockSize);
+	if(address>=this->startingAddress && address<this->startingAddress+this->blockSize)
 	{
 		
 		return true;
@@ -103,8 +116,8 @@ public:
 	unsigned timeStamp=1;
 
 	
-	vector< unsigned > LRU = vector< unsigned >(numOfSets); // LRU[2] wiil hold the index of the LRU in set 2.
-	vector< vector< Block > > myBlocks = vector< vector< Block > >(numOfWays); // myBlocks[2][20] will hold the block in way 2, set 20.
+	vector< int > LRU ; // LRU[2] will hold the index of the LRU in set 2.
+	vector< Block>**  mySet ;//= (vector< vector< Block > >)numOfWays; // mySet[2][20] will hold the block in way 2, set 20.
 
 	//*********methods*********//
 	Layer(unsigned layerSize_t, unsigned numOfWays_t, unsigned layerBlockSize_t, unsigned cyclesPerOperation_t, bool isContain_t,bool isWriteAllocate_t);
@@ -112,8 +125,11 @@ public:
 	void updateLRU(unsigned int set);
 	bool findBlockInLayer(unsigned address,unsigned* way);
 	bool findEmptySpotInLayer(unsigned address,unsigned* freeWay);
-	bool writeBlock(unsigned address);
-	bool readBlock(unsigned address);
+	bool writeBlock(unsigned address,unsigned* removedAddress,bool* isRemovedDirty);
+	bool readBlock(unsigned address,unsigned* removedAddress,bool* isRemovedDirty);
+	void removeBlock(unsigned address);
+
+	~Layer();
 
 
 };
@@ -122,28 +138,92 @@ public:
 
 Layer::Layer (unsigned layerSize_t, unsigned numOfWays_t, unsigned layerBlockSize_t, unsigned cyclesPerOperation_t,bool isContain_t, bool isWriteAllocate_t): layerSize(layerSize_t), numOfWays(numOfWays_t),
 																						 layerBlockSize(layerBlockSize_t), cyclesPerOperation(cyclesPerOperation_t), isContain(isContain_t), isWriteAllocate(isWriteAllocate_t)
-{
+{	
  this->numOfLines = layerSize_t / layerBlockSize_t;
  this->numOfSets = this->numOfLines / this->numOfWays;
+ mySet=(vector< Block>**)malloc(numOfSets*sizeof(vector<Block>*));
+ for (unsigned int i = 0; i < numOfSets; i++)
+ {
+	mySet[i]=new vector<Block>; 
+ }
+
+ for (unsigned int i = 0; i <numOfSets; i++)
+ {
+ 	for (unsigned int j = 0; j <numOfWays; j++)
+ 	{
+ 		Block* block=new Block(layerBlockSize);
+ 		mySet[i]->push_back(*block);
+ 	}
+ }
+
+ LRU.resize(numOfSets);
+ for (unsigned int i = 0; i < numOfSets; i++)
+ {
+ 	LRU[i]=-1;
+ }
 
 }
+
+void Layer::removeBlock(unsigned address)
+{
+	unsigned tag;
+	unsigned set;
+	addressToTagAndSet(address,&tag,&set);
+	auto setVec=mySet[set];
+	int currenyWay=0;
+	for (auto block : *setVec)
+	{
+		if((block.tag==tag) && (block.validBit==VALID))
+		{
+			
+			setVec->erase(setVec->begin()+currenyWay);
+			block =Block(layerBlockSize);
+			block.lruLastTouchTime=timeStamp;
+			setVec->insert(setVec->begin()+currenyWay,block);
+		}
+		currenyWay++;
+	}
+
+	
+}
+
+Layer::~Layer()
+{
+	for (unsigned int i = 0; i < numOfSets; i++)
+	{
+		delete mySet[i];
+	}
+	free (mySet);
+}
+
 void Layer::addressToTagAndSet(unsigned address, unsigned* tag, unsigned* set)
 {
-	int numOfBytesInBlock=log2((int)layerBlockSize);
-	address=address>>numOfBytesInBlock;
-	*set=address%(int)numOfSets;
-	*tag=address>>(int)log2((int)numOfSets);
+
+	address=address/(layerBlockSize);
+	*set=address%(numOfSets);
+	address=address/(numOfSets);
+	*tag=address;
 
 }
 
-void Layer :: updateLRU(unsigned set){
+void Layer :: updateLRU(unsigned set)
+{
 	unsigned oldestUsed=0;
-	for (int i = 0; i < numOfWays; i++)
-	{
-		if((timeStamp-myBlocks[i][set].lruLastTouchTime)>(timeStamp-myBlocks[oldestUsed][set].lruLastTouchTime))
+	auto setVec=(vector<Block>)*mySet[set];
+
+	if((LRU[set]!=-1)){
+		auto lruBlock=getBlock(setVec,LRU[set]);
+		int i=0;
+		for (auto block : setVec)
 		{
-			oldestUsed=i;
-		}	
+			if((block.validBit==VALID)&&(timeStamp-(block.lruLastTouchTime))>=((int)(timeStamp-(lruBlock.lruLastTouchTime))))
+			{
+
+				oldestUsed=i;
+				lruBlock=block;
+			}	
+			i++;
+		}
 	}
 	LRU[set]=oldestUsed;
 	timeStamp++;
@@ -154,108 +234,149 @@ bool Layer::findBlockInLayer(unsigned address,unsigned* way)
 {
 	unsigned tag=0;
 	unsigned set=0;
-
 	addressToTagAndSet(address,&tag,&set);
-	for (int curr_way = 0; curr_way < numOfWays; curr_way++)
+	auto setVec=(vector<Block>)*mySet[set];
+	int curr_way=0;
+	for (auto block : setVec)
 	{
-		printf("start to findBlockInLayer\n");
-		printf("startingAddress is %d\n",myBlocks[curr_way][set].lruLastTouchTime );
-		if((myBlocks[curr_way][set].startingAddress!=-1) && (myBlocks[curr_way][set].isHit(address)) )
+		
+		if((block.validBit==VALID) && (block.tag==tag) )
 		{
 			*way=curr_way;
 			return true;
 		}
+		curr_way++;
 		 
 	}
-	printf("exit to findBlockInLayer\n");
 	return false;
 }
 
 bool Layer::findEmptySpotInLayer(unsigned int set,unsigned* freeWay)
 {
-
-	for (int way = 0; way < numOfWays; way++)
+	auto setVec=(vector<Block>)*mySet[set];
+	int way=0;
+	for (auto block : setVec)
 	{
-		if(myBlocks[way][set].isEmpty)
+
+		if((block.isEmpty))
 		{
 			*freeWay=way;
 			return true;
 		}
+		way++;
 		 
 	}
 	return false;
 }	
 
-bool Layer :: writeBlock(unsigned address){
+bool Layer :: writeBlock(unsigned address,unsigned* removedAddress,bool* isRemovedDirty){
 	unsigned way=0;
 	unsigned tag=0;
 	unsigned set=0;	
 	addressToTagAndSet(address,&tag,&set);
+	auto setVec=mySet[set];
 	if (findBlockInLayer(address,&way))
 	{
-		myBlocks[way][set].dirtyBit=true;
-		myBlocks[way][set].lruLastTouchTime=timeStamp;
+		Block block=getBlock(*setVec,way);
+		setVec->erase(find(setVec->begin(),setVec->end(),block));
+		block.tag=tag;
+		block.makeDirty(); 
+		block.lruLastTouchTime=timeStamp;
+		setVec->insert(setVec->begin()+way,block);
 		updateLRU(set);
 		return HIT;
 	}
 	else {
+		if (isWriteAllocate)
+		{
 		
-		unsigned freeWay=0;
-		if(findEmptySpotInLayer(set,&freeWay)){
-			myBlocks[freeWay][set].setStartingAddress(address);
-			myBlocks[freeWay][set].isEmpty=false;
-			myBlocks[freeWay][set].lruLastTouchTime=timeStamp;
-			updateLRU(set);
-			return MISS;
-		}
-		else{
-			if(isWriteAllocate){
-			way=LRU[set];
-			myBlocks[way][set].setStartingAddress(address);
-			myBlocks[way][set].lruLastTouchTime=timeStamp;
-			myBlocks[way][set].dirtyBit=true;
-			myBlocks[way][set].isEmpty=false;
-			updateLRU(set);
-			return MISS;
+			unsigned freeWay=0;
+			if(findEmptySpotInLayer(set,&freeWay)){
+				Block block=getBlock(*setVec,freeWay);
+				setVec->erase(setVec->begin()+freeWay);
+				block.setStartingAddress(address);
+				block.tag=tag;
+				block.isEmpty=false;
+				block.validBit=VALID;
+				block.makeDirty();
+				block.lruLastTouchTime=timeStamp;
+				setVec->insert(setVec->begin()+freeWay,block);
+				updateLRU(set);
+				return MISS;
 			}
-			else{
+		
+			else
+			{
+				printf("delete block from the LRU\n" );
+				way=LRU[set];
+				Block block=getBlock(*setVec,way);
+				*removedAddress=block.startingAddress;
+				*isRemovedDirty=block.dirtyBit;
+				setVec->erase(find(setVec->begin(),setVec->end(),block));
+				block.setStartingAddress(address);
+				block.tag=tag;
+				block.lruLastTouchTime=timeStamp;
+				block.isEmpty=false;
+				block.validBit=VALID;
+				block.makeDirty();
+				setVec->insert(setVec->begin()+way,block);
+				updateLRU(set);
 				return MISS;
 			}
 		}
+
+		else
+		{
+			return MISS;
+		}
+		
 		
 	}
 }
  
-bool Layer :: readBlock(unsigned address){
+bool Layer :: readBlock(unsigned address,unsigned* removedAddress,bool* isRemovedDirty){
 	unsigned way=0;
 	unsigned tag=0;
 	unsigned set=0;	
 	addressToTagAndSet(address,&tag,&set);
-	printf("tag: %d set: %d \n",tag,set );
-	printf("before findBlockInLayer\n");
+	auto setVec=mySet[set];
 	if (findBlockInLayer(address,&way))
 	{
-		
-		myBlocks[way][set].lruLastTouchTime=timeStamp;
+		Block block=getBlock(*setVec,way);
+		setVec->erase(find(setVec->begin(),setVec->end(),block));
+		block.tag=tag;
+		block.lruLastTouchTime=timeStamp;
+		setVec->insert(setVec->begin()+way,block);
 		updateLRU(set);
 		return HIT;
 	}
 	else{
 		unsigned freeWay=0;
-		printf("before findEmptySpotInLayer\n");
 		if (findEmptySpotInLayer(set,&freeWay))
 		{
-			printf("after findEmptySpotInLayer\n");
-			myBlocks[freeWay][set].setStartingAddress(address);
-			myBlocks[freeWay][set].isEmpty=false;
-			myBlocks[freeWay][set].lruLastTouchTime=timeStamp;
-			updateLRU(set);
+			Block block=getBlock(*setVec,freeWay);
+			setVec->erase(setVec->begin()+freeWay);
+			block.setStartingAddress(address);
+			block.tag=tag;
+			block.isEmpty=false;
+			block.validBit=VALID;
+			block.lruLastTouchTime=timeStamp;
+			setVec->insert(setVec->begin()+freeWay,block);
+			updateLRU(set);			
 			return MISS;
 		}
 		else{
+			printf("delete block from the LRU\n" );
 			way=LRU[set];
-			myBlocks[way][set].setStartingAddress(address);
-			myBlocks[way][set].lruLastTouchTime=timeStamp;
+			Block block=getBlock(*setVec,way);
+			*removedAddress=block.startingAddress;
+			*isRemovedDirty=block.dirtyBit;
+			setVec->erase(find(setVec->begin(),setVec->end(),block));
+			block.setStartingAddress(address);
+			block.tag=tag;
+			block.lruLastTouchTime=timeStamp;
+			block.validBit=VALID;
+			setVec->insert(setVec->begin()+way,block);
 			updateLRU(set);
 			return MISS;
 		}
@@ -271,6 +392,7 @@ public:
 	unsigned int memoryCyclePerOperation;
 	unsigned int totalAccesses;
 	unsigned int totalTime;
+	unsigned int totalNumberOfOperations;
 	Layer L1;
 	Layer L2;
 	Memory(unsigned int memoryCyclePerOperation_t, unsigned int layerBlockSize1 , unsigned int layerSize1, unsigned int numOfWays1,unsigned cyclePerOperation1, bool isContain1,
@@ -280,6 +402,7 @@ public:
 														this->memoryCyclePerOperation=memoryCyclePerOperation_t;
 														this->totalTime=0;
 														this->totalAccesses=0;
+														this->totalNumberOfOperations=0;
 													}
 	bool read(unsigned address);
 	bool write(unsigned address);
@@ -289,19 +412,36 @@ public:
 bool Memory :: read(unsigned address){
 	totalAccesses++;
 	totalTime+=L1.cyclesPerOperation;
+	unsigned removedAddress1;
+	bool isRemovedDirty1;
+	unsigned removedAddress2;
+	unsigned temp=removedAddress2;
+	bool isRemovedDirty2;
+	unsigned tag=0;
+	unsigned set=0;
 
-	if(L1.readBlock(address)==MISS)
+	if(L1.readBlock(address,&removedAddress1,&isRemovedDirty1)==MISS)
 	{
-		printf("L1 miss\n");
 		L1.missCounter++;
 		totalAccesses++;
 		totalTime+=L2.cyclesPerOperation;
-		if(L2.readBlock(address)==MISS)
+		if (isRemovedDirty1)
 		{
-			printf("L2 miss\n");
+			L2.readBlock(removedAddress1,&removedAddress2,&isRemovedDirty2);
+		}
+		
+		if(L2.readBlock(address,&removedAddress2,&isRemovedDirty2)==MISS)
+		{
 			L2.missCounter++;
 			totalAccesses++;
 			totalTime+=memoryCyclePerOperation;
+			if(removedAddress2!=temp)
+			{
+				L1.removeBlock(removedAddress2);
+				L1.addressToTagAndSet(removedAddress2,&tag,&set);
+				L1.updateLRU(set);
+				L1.timeStamp--;
+			}
 			return MISS;
 		}
 		else{
@@ -320,17 +460,37 @@ bool Memory :: write(unsigned address)
 {
 	totalAccesses++;
 	totalTime+=L1.cyclesPerOperation;
-	if(L1.writeBlock(address)==MISS)
+	unsigned removedAddress1;
+	bool isRemovedDirty1;
+	unsigned removedAddress2;
+	unsigned temp=removedAddress2;
+	bool isRemovedDirty2;
+	unsigned tag=0;
+	unsigned set=0;
+	if(L1.writeBlock(address,&removedAddress1,&isRemovedDirty1)==MISS)
 	{
 		L1.missCounter++;
 		totalAccesses++;
 		totalTime+=L2.cyclesPerOperation;
-		if(L2.writeBlock(address)==MISS)
+
+		if (isRemovedDirty1)
+		{
+			L2.writeBlock(removedAddress1,&removedAddress2,&isRemovedDirty2);
+		}
+
+		if(L2.writeBlock(address,&removedAddress2,&isRemovedDirty2)==MISS)
 		{
 			L2.missCounter++;
 			totalAccesses++;
 			totalTime+=memoryCyclePerOperation;
-			//maybe we need to add writr allocate here
+			if(removedAddress2!=temp)
+			{
+				L1.removeBlock(removedAddress2);
+				L1.addressToTagAndSet(removedAddress2,&tag,&set);
+				L1.updateLRU(set);	
+				L1.timeStamp--;
+			}
+			return MISS;
 		}
 		else{
 			L2.hitCounter++;
@@ -341,8 +501,11 @@ bool Memory :: write(unsigned address)
 		L1.hitCounter++;
 		return HIT;
 	}
+
 }
+
 void Memory :: readNextLine(char operation,unsigned address){
+	totalNumberOfOperations++;
 	if (operation=='r')
 	{
 		
@@ -422,33 +585,32 @@ int main(int argc, char **argv) {
 			return 0;
 		}
 
-		// DEBUG - remove this line
-		cout << "operation: " << operation;
+		
 
 		string cutAddress = address.substr(2); // Removing the "0x" part of the address
 
-		// DEBUG - remove this line
-		cout << ", address (hex)" << cutAddress;
 
 		unsigned long int num = 0;
 		num = strtoul(cutAddress.c_str(), NULL, 16);
 
-		// DEBUG - remove this line
-		cout << " (dec) " << num << endl;
 
-	
+		
 		mainMem.readNextLine(operation,num);
-
 	}
-
-	double L1MissRate=mainMem.L1.missCounter/(mainMem.L1.timeStamp-1);
-	double L2MissRate=mainMem.L2.missCounter/(mainMem.L2.timeStamp-1);
-	double avgAccTime=mainMem.totalTime/mainMem.totalAccesses;
+	
+	int L1access=mainMem.L1.hitCounter+mainMem.L1.missCounter;
+	int L2access=mainMem.L2.hitCounter+mainMem.L2.missCounter;
+	double mainMemoryAccessTime=(mainMem.totalAccesses-(L1access+L2access))*mainMem.memoryCyclePerOperation;
+	double L1AccessTime=(double)((L1access)*(mainMem.L1.cyclesPerOperation));
+	double L2AccessTime=(double)((L2access)*(mainMem.L2.cyclesPerOperation));
+	double L1MissRate=(double)mainMem.L1.missCounter/(double)(L1access);
+	double L2MissRate=(double)mainMem.L2.missCounter/(double)(L2access);
+	double avgAccTime=(double)(mainMemoryAccessTime+L1AccessTime+L2AccessTime)/(double)(mainMem.totalNumberOfOperations);
+	
 
 	printf("L1miss=%.03f ", L1MissRate);
 	printf("L2miss=%.03f ", L2MissRate);
 	printf("AccTimeAvg=%.03f\n", avgAccTime);
-
 
 
 	return 0;

@@ -1,0 +1,45 @@
+{
+  "configurations": [
+    {
+      "name": "(lldb) Launch",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/cacheSim",
+      "args": [
+        "example20_trace",
+        "--mem-cyc",
+        "300",
+        "--bsize",
+        "7",
+        "--wr-alloc",
+        "0",
+        "--l1-size",
+        "8",
+        "--l1-assoc",
+        "0",
+        "--l1-cyc",
+        "5",
+        "--l2-size",
+        "21",
+        "--l2-assoc",
+        "13",
+        "--l2-cyc",
+        "50"
+      ],
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "externalConsole": true,
+      "MIMode": "lldb"
+    },
+    {
+      "name": "C/C++ Runner: Debug Session",
+      "type": "lldb",
+      "request": "launch",
+      "args": [],
+      "cwd": "/Users/zarfati/Projects/Technion/ComArch_HW/HW2/last",
+      "program": "/Users/zarfati/Projects/Technion/ComArch_HW/HW2/last/build/Debug/outDebug"
+    }
+  ],
+  "version": "2.0.0"
+}
